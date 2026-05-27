@@ -1,0 +1,208 @@
+//@version=6
+strategy("ZW - VWAP+VOL+Keltner (A/B/C) v1", overlay=true, pyramiding=0, process_orders_on_close=true)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INPUTS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+useRTH   = input.bool(true, "Solo RTH 09:30-16:00")
+sess     = input.session("0930-1600", "Session")
+minRR    = input.float(2.0, "RR mínimo", step=0.25)
+
+emaLen   = input.int(20, "Keltner EMA", minval=1)
+atrLen   = input.int(20, "ATR", minval=1)
+atrMult  = input.float(2.0, "ATR mult", step=0.25)
+
+volLen   = input.int(20, "Vol SMA", minval=1)
+volMult  = input.float(1.2, "Vol spike xSMA", step=0.05)
+pbVolMax = input.float(0.9, "Pullback vol max xSMA", step=0.05)
+
+enableA  = input.bool(true,  "Setup A - Pullback VWAP")
+enableB  = input.bool(false, "Setup B - Rechazo VWAP")
+enableC  = input.bool(false, "Setup C - Breakout Keltner")
+
+secret   = input.string("", "Webhook secret", display=display.none)
+testMode = input.bool(false, "TEST MODE - Force one test order", display=display.none)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SESSION
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+inSess = useRTH ? not na(time(timeframe.period, sess)) : true
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INDICADORES INTERNOS: VWAP + KELTNER + VOLUMEN
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+vwap = ta.vwap(hlc3)
+
+basis = ta.ema(close, emaLen)
+atr   = ta.atr(atrLen)
+upper = basis + atrMult * atr
+lower = basis - atrMult * atr
+
+volS  = ta.sma(volume, volLen)
+volOk = volume > volS * volMult
+
+width    = upper - lower
+widthSma = ta.sma(width, 50)
+
+squeeze  = not na(widthSma) and width < widthSma * 0.70
+vwapFlat = not na(vwap[10]) and math.abs(vwap - vwap[10]) < atr * 0.10
+noTrade  = squeeze and vwapFlat
+
+longBias  = close > vwap and basis > basis[1]
+shortBias = close < vwap and basis < basis[1]
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// FUNCIÓN MENSAJE WEBHOOK
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+f_msg(_side, _sl, _tp2) =>
+    '{"ticker":"' + syminfo.ticker + '","side":"' + _side + '","qty":1,"entry":' + str.tostring(close) + ',"sl":' + str.tostring(_sl) + ',"tp2":' + str.tostring(_tp2) + '}'
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SETUP A: PULLBACK A VWAP - LONG
+// Pullback = volumen bajo cerca de VWAP
+// Confirmación = vela alcista con volumen alto después del pullback
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+touchTol = atr * 0.15
+
+pbCondition = longBias and low <= vwap + touchTol and volume < volS * pbVolMax
+
+barsSincePB = ta.barssince(pbCondition)
+
+pbRecent = not na(barsSincePB) and barsSincePB <= 5
+
+confirmBull = close > open and close > vwap and volume > volS * volMult
+
+aLong = enableA and inSess and not noTrade and longBias and pbRecent and confirmBull
+
+aStop = ta.lowest(low, 8) - atr * 0.10
+aRisk = close - aStop
+aTP2  = close + aRisk * minRR
+aOK   = aLong and aRisk > 0
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SETUP B: RECHAZO BAJISTA EN VWAP - SHORT
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+bRej = enableB and inSess and not noTrade and shortBias and high[1] >= (vwap[1] - touchTol) and close[1] < vwap[1] and close[1] < open[1] and volume[1] > volS[1] * volMult
+
+bShort = bRej and close < low[1] and volOk
+
+bStop = math.max(vwap, high[1]) + atr * 0.10
+bRisk = bStop - close
+bTP2  = close - bRisk * minRR
+bOK   = bShort and bRisk > 0
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SETUP C: BREAKOUT KELTNER + VOLUMEN
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+cLong  = enableC and inSess and not noTrade and longBias and squeeze and close > upper and volOk
+cShort = enableC and inSess and not noTrade and shortBias and squeeze and close < lower and volOk
+
+cStopL = basis - atr * 0.10
+cStopS = basis + atr * 0.10
+
+cRiskL = close - cStopL
+cRiskS = cStopS - close
+
+cTP2L = close + cRiskL * minRR
+cTP2S = close - cRiskS * minRR
+
+cLongOK  = cLong and cRiskL > 0
+cShortOK = cShort and cRiskS > 0
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ENTRADAS Y SALIDAS
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+canEnter = strategy.position_size == 0
+var float activeEntry = na
+var float activeSL    = na
+var float activeTP    = na
+
+var line entryLine = na
+var line slLine    = na
+var line tpLine    = na
+
+var label entryLabel = na
+var label slLabel    = na
+var label tpLabel    = na
+if testMode and barstate.isconfirmed
+    if strategy.position_size != 0
+        strategy.close_all(comment="TEST CLOSE", alert_message=f_msg("CLOSE", close, close))
+    else
+        activeEntry := close
+        activeSL    := close - atr
+        activeTP    := close + atr * 2
+        strategy.entry("TEST-L-FORCED", strategy.long, alert_message=f_msg("BUY", activeSL, activeTP))
+        strategy.exit("TEST-L-FORCED Exit", "TEST-L-FORCED", stop=activeSL, limit=activeTP)
+if canEnter and cLongOK
+    activeEntry := close
+    activeSL    := cStopL
+    activeTP    := cTP2L
+    strategy.entry("L-C", strategy.long, alert_message=f_msg("BUY", cStopL, cTP2L))
+    strategy.exit("L-C Exit", "L-C", stop=cStopL, limit=cTP2L)
+if canEnter and aOK
+    activeEntry := close
+    activeSL    := aStop
+    activeTP    := aTP2
+    strategy.entry("L-A", strategy.long, alert_message=f_msg("BUY", aStop, aTP2))
+    strategy.exit("L-A Exit", "L-A", stop=aStop, limit=aTP2)
+
+if canEnter and cShortOK
+    activeEntry := close
+    activeSL    := cStopS
+    activeTP    := cTP2S
+    strategy.entry("S-C", strategy.short, alert_message=f_msg("SELL", cStopS, cTP2S))
+    strategy.exit("S-C Exit", "S-C", stop=cStopS, limit=cTP2S)
+
+if canEnter and bOK
+    activeEntry := close
+    activeSL    := bStop
+    activeTP    := bTP2
+    strategy.entry("S-B", strategy.short, alert_message=f_msg("SELL", bStop, bTP2))
+    strategy.exit("S-B Exit", "S-B", stop=bStop, limit=bTP2)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// LÍNEAS VISUALES EXTENDIDAS DE ENTRADA / STOP LOSS / TAKE PROFIT
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+newPosition = strategy.position_size != 0 and strategy.position_size[1] == 0
+flatNow     = strategy.position_size == 0 and strategy.position_size[1] != 0
+
+if newPosition and not na(activeEntry) and not na(activeSL) and not na(activeTP)
+    line.delete(entryLine)
+    line.delete(slLine)
+    line.delete(tpLine)
+
+    label.delete(entryLabel)
+    label.delete(slLabel)
+    label.delete(tpLabel)
+
+    entryLine := line.new(bar_index, activeEntry, bar_index + 1, activeEntry, extend=extend.right, color=color.new(color.blue, 0), width=2)
+    slLine    := line.new(bar_index, activeSL,    bar_index + 1, activeSL,    extend=extend.right, color=color.new(color.red, 0), width=2)
+    tpLine    := line.new(bar_index, activeTP,    bar_index + 1, activeTP,    extend=extend.right, color=color.new(color.green, 0), width=2)
+
+    entryLabel := label.new(bar_index, activeEntry, "ENTRY " + str.tostring(activeEntry, format.mintick), style=label.style_label_left, color=color.new(color.blue, 0), textcolor=color.white)
+    slLabel    := label.new(bar_index, activeSL,    "SL " + str.tostring(activeSL, format.mintick),       style=label.style_label_left, color=color.new(color.red, 0), textcolor=color.white)
+    tpLabel    := label.new(bar_index, activeTP,    "TP " + str.tostring(activeTP, format.mintick),       style=label.style_label_left, color=color.new(color.green, 0), textcolor=color.white)
+
+if strategy.position_size != 0
+    if not na(entryLabel)
+        label.set_x(entryLabel, bar_index)
+    if not na(slLabel)
+        label.set_x(slLabel, bar_index)
+    if not na(tpLabel)
+        label.set_x(tpLabel, bar_index)
+
+if flatNow
+    line.delete(entryLine)
+    line.delete(slLine)
+    line.delete(tpLine)
+
+    label.delete(entryLabel)
+    label.delete(slLabel)
+    label.delete(tpLabel)
+
+    entryLine := na
+    slLine    := na
+    tpLine    := na
+
+    entryLabel := na
+    slLabel    := na
+    tpLabel    := na

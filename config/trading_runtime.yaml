@@ -1,0 +1,14 @@
+# ZW Trading Runtime Config
+# Do NOT put real broker API keys here.
+
+mode: paper
+webhook_secret: CHANGE_ME_LOCAL_ONLY
+
+orders_log: logs/orders.ndjson
+alerts_log: logs/risk_alerts.ndjson
+paused_file: logs/PAUSED
+
+max_daily_loss_pct: 2.0
+max_consecutive_losses: 3
+max_qty: 10
+allowed_sides: BUY,SELL,CLOSE

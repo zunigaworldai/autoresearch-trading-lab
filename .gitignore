@@ -27,3 +27,8 @@ results.tsv
 __pycache__/
 *.pyc
 experiments/latest_result.json
+
+# Live runtime logs
+logs/*.ndjson
+logs/*.json
+logs/PAUSED

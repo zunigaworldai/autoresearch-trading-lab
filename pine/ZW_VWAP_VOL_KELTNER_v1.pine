@@ -1,5 +1,5 @@
 //@version=6
-strategy("ZW - VWAP+VOL+Keltner (A/B/C) v1", overlay=true, pyramiding=0, process_orders_on_close=true)
+strategy("ZW - VWAP+VOL+Keltner (A/B/C) v1.1 SECRET", overlay=true, pyramiding=0, process_orders_on_close=true)
 
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // INPUTS

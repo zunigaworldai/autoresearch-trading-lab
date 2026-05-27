@@ -32,3 +32,11 @@ experiments/latest_result.json
 logs/*.ndjson
 logs/*.json
 logs/PAUSED
+
+# Generated strategy experiment outputs
+experiments/*.json
+experiments/trade_logs/*.csv
+
+# Webhook runtime background files
+logs/*.out
+logs/*.pid

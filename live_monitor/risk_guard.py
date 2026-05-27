@@ -113,7 +113,7 @@ def validate_payload(payload: dict, config: dict) -> tuple[bool, str, dict | Non
     if qty > float(config["max_qty"]):
         return False, "qty_exceeds_max_qty", None
 
-        safe_payload = payload.copy()
+    safe_payload = payload.copy()
     if "secret" in safe_payload:
         safe_payload["secret"] = "***REDACTED***"
 

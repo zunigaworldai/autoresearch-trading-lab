@@ -54,7 +54,7 @@ shortBias = close < vwap and basis < basis[1]
 // FUNCIÓN MENSAJE WEBHOOK
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 f_msg(_side, _sl, _tp2) =>
-    '{"ticker":"' + syminfo.ticker + '","side":"' + _side + '","qty":1,"entry":' + str.tostring(close) + ',"sl":' + str.tostring(_sl) + ',"tp2":' + str.tostring(_tp2) + '}'
+    '{"secret":"' + secret + '","ticker":"' + syminfo.ticker + '","side":"' + _side + '","qty":1,"entry":' + str.tostring(close) + ',"sl":' + str.tostring(_sl) + ',"tp2":' + str.tostring(_tp2) + '}'
 
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SETUP A: PULLBACK A VWAP - LONG

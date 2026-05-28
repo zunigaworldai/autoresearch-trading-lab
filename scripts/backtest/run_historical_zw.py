@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from engine.metrics import score_report
-from evaluate_zw_strategy import run_trade_simulation
+from engine.trade_simulator import run_trade_simulation
 from strategies.zw_vwap_vol_keltner import DEFAULT_PARAMS, generate_signals
 from scripts.data.validate_ohlcv import validate_file
 

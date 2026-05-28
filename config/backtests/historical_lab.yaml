@@ -1,0 +1,66 @@
+# Historical Backtesting Lab Configuration
+
+lab_name: historical_strategy_lab_v1
+
+date_range:
+  start: "2026-01-01"
+  end: "2026-05-27"
+
+primary_instrument: SPY
+
+instruments:
+  - SPY
+  - QQQ
+  - NVDA
+  - AAPL
+  - MSFT
+
+timeframes:
+  - 2m
+  - 3m
+  - 5m
+
+diagnostic_timeframes:
+  - 1m
+
+strategies:
+  - name: zw_vwap_vol_keltner
+    version: v1
+    status: active_candidate
+    file: strategies/zw_vwap_vol_keltner.py
+    pine_file: pine/ZW_VWAP_VOL_KELTNER_v1.pine
+
+cost_scenarios:
+  - name: cost_1x
+    multiplier: 1
+  - name: cost_2x
+    multiplier: 2
+  - name: cost_3x
+    multiplier: 3
+
+evaluation_metrics:
+  - cagr
+  - max_drawdown
+  - sharpe
+  - sortino
+  - calmar
+  - profit_factor
+  - expectancy
+  - win_rate
+  - average_win
+  - average_loss
+  - time_in_market
+  - total_trades
+  - avg_rr
+
+acceptance_rules:
+  require_out_of_sample: true
+  require_cost_robustness: true
+  reject_if_profit_depends_on_few_trades: true
+  reject_if_drawdown_excessive: true
+  reject_if_only_training_improves: true
+
+workflow:
+  phase_1: "Historical backtesting on official 5 instruments."
+  phase_2: "Paper real-time validation."
+  phase_3: "Live trading only after approval."

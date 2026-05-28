@@ -1,0 +1,19 @@
+# Official trading universe for AutoResearch Trading Lab
+
+primary_instrument: SPY
+
+instruments:
+  - SPY
+  - QQQ
+  - NVDA
+  - AAPL
+  - MSFT
+
+runtime_test_instruments:
+  - BTCUSD
+  - BTCUSDT
+
+notes:
+  SPY: "Primary instrument for first serious backtest and validation."
+  BTCUSD: "Infrastructure testing only outside regular US equity hours."
+  BTCUSDT: "Infrastructure testing only outside regular US equity hours."

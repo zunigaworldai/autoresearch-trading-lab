@@ -40,3 +40,7 @@ experiments/trade_logs/*.csv
 # Webhook runtime background files
 logs/*.out
 logs/*.pid
+
+# Historical raw/processed market data
+data/raw/**/*.csv
+data/processed/**/*.csv

@@ -159,7 +159,7 @@ def validate_payload(payload: dict, config: dict) -> tuple[bool, str, dict | Non
     return True, "accepted_order", event
 
 
-def process_payload(payload: dict) -> tuple[int, dict]:
+def process_payload(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     config = load_config()
     ok, reason, event = validate_payload(payload, config)
 
@@ -171,20 +171,27 @@ def process_payload(payload: dict) -> tuple[int, dict]:
 
     if ok and event:
         append_ndjson(root_path(str(config["orders_log"])), event)
+
         response["event"] = {
             "ticker": event["ticker"],
             "side": event["side"],
             "qty": event["qty"],
             "mode": event["mode"],
         }
+
         return 200, response
+
+    safe_payload = payload.copy() if isinstance(payload, dict) else payload
+
+    if isinstance(safe_payload, dict) and "secret" in safe_payload:
+        safe_payload["secret"] = "***REDACTED***"
 
     append_ndjson(
         root_path(str(config["alerts_log"])),
         {
             "received_at": utc_now(),
             "reason": reason,
-            "payload": payload,
+            "payload": safe_payload,
         },
     )
 

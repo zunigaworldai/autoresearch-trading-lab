@@ -44,3 +44,7 @@ logs/*.pid
 # Historical raw/processed market data
 data/raw/**/*.csv
 data/processed/**/*.csv
+
+# Historical backtest generated outputs
+outputs/backtests/**/*.csv
+outputs/backtests/**/*.json

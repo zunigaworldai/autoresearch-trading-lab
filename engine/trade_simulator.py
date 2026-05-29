@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 
-VALID_EXIT_POLICIES = {"fixed", "break_even_1r"}
+VALID_EXIT_POLICIES = {"fixed", "break_even_1r", "partial_50_at_1r_be"}
 
 
 def _prepare_signals(signals: pd.DataFrame) -> pd.DataFrame:
@@ -38,7 +38,42 @@ def _reset_position() -> dict:
         "tp_price": None,
         "setup": None,
         "be_triggered": False,
+        "partial_taken": False,
+        "partial_fraction": 0.0,
+        "remaining_fraction": 1.0,
+        "partial_exit_price": None,
+        "partial_exit_time": None,
+        "partial_exit_reason": "",
+        "partial_gross_return": 0.0,
     }
+
+
+def _side_label(position: int) -> str:
+    if position == 1:
+        return "LONG"
+    if position == -1:
+        return "SHORT"
+    raise ValueError("Invalid position")
+
+
+def _gross_return_for_exit(position: int, entry_price: float, exit_price: float) -> float:
+    if position == 1:
+        return exit_price / entry_price - 1.0
+    if position == -1:
+        return entry_price / exit_price - 1.0
+    raise ValueError("Cannot compute return without open position")
+
+
+def _total_gross_return(position_state: dict, final_exit_price: float) -> float:
+    position = int(position_state["position"])
+    entry_price = float(position_state["entry_price"])
+    final_gross = _gross_return_for_exit(position, entry_price, final_exit_price)
+
+    partial_fraction = float(position_state.get("partial_fraction", 0.0))
+    remaining_fraction = float(position_state.get("remaining_fraction", 1.0))
+    partial_gross_return = float(position_state.get("partial_gross_return", 0.0))
+
+    return (partial_fraction * partial_gross_return) + (remaining_fraction * final_gross)
 
 
 def _close_trade(
@@ -53,15 +88,7 @@ def _close_trade(
     position = int(position_state["position"])
     entry_price = float(position_state["entry_price"])
 
-    if position == 1:
-        gross_return = exit_price / entry_price - 1.0
-        side = "LONG"
-    elif position == -1:
-        gross_return = entry_price / exit_price - 1.0
-        side = "SHORT"
-    else:
-        raise ValueError("Cannot close trade without open position")
-
+    gross_return = _total_gross_return(position_state, exit_price)
     net_return = gross_return - (cost_per_side * 2)
 
     trade_returns.append(net_return)
@@ -70,7 +97,7 @@ def _close_trade(
         {
             "entry_time": str(position_state["entry_time"]),
             "exit_time": str(exit_time),
-            "side": side,
+            "side": _side_label(position),
             "setup": position_state["setup"],
             "entry": entry_price,
             "exit": exit_price,
@@ -79,6 +106,13 @@ def _close_trade(
             "tp": position_state["tp_price"],
             "exit_reason": exit_reason,
             "be_triggered": bool(position_state.get("be_triggered", False)),
+            "partial_taken": bool(position_state.get("partial_taken", False)),
+            "partial_fraction": float(position_state.get("partial_fraction", 0.0)),
+            "remaining_fraction": float(position_state.get("remaining_fraction", 1.0)),
+            "partial_exit_price": position_state.get("partial_exit_price"),
+            "partial_exit_time": str(position_state["partial_exit_time"]) if position_state.get("partial_exit_time") is not None else "",
+            "partial_exit_reason": position_state.get("partial_exit_reason", ""),
+            "partial_gross_return": float(position_state.get("partial_gross_return", 0.0)),
             "gross_return": gross_return,
             "net_return": net_return,
         }
@@ -97,10 +131,7 @@ def _stop_exit_reason(position_state: dict) -> str:
     return "STOP"
 
 
-def _check_exit(
-    row: pd.Series,
-    position_state: dict,
-) -> tuple[bool, float | None, str | None]:
+def _check_exit(row: pd.Series, position_state: dict) -> tuple[bool, float | None, str | None]:
     position = int(position_state["position"])
     stop_price = float(position_state["stop_price"])
     tp_price = float(position_state["tp_price"])
@@ -126,45 +157,99 @@ def _check_exit(
     return False, None, None
 
 
-def _apply_break_even_1r(row: pd.Series, position_state: dict) -> None:
-    if bool(position_state.get("be_triggered", False)):
-        return
-
+def _initial_risk(position_state: dict) -> float:
     position = int(position_state["position"])
     entry_price = float(position_state["entry_price"])
     initial_stop = float(position_state["initial_stop_price"])
 
     if position == 1:
-        initial_risk = entry_price - initial_stop
+        return entry_price - initial_stop
+    if position == -1:
+        return initial_stop - entry_price
+    return 0.0
 
-        if initial_risk <= 0:
-            return
 
-        trigger_price = entry_price + initial_risk
+def _one_r_trigger_price(position_state: dict) -> float | None:
+    position = int(position_state["position"])
+    entry_price = float(position_state["entry_price"])
+    risk = _initial_risk(position_state)
 
-        if float(row["high"]) >= trigger_price:
-            position_state["stop_price"] = max(float(position_state["stop_price"]), entry_price)
-            position_state["be_triggered"] = True
+    if risk <= 0:
+        return None
+    if position == 1:
+        return entry_price + risk
+    if position == -1:
+        return entry_price - risk
+    return None
 
+
+def _reached_price(row: pd.Series, position_state: dict, trigger_price: float) -> bool:
+    position = int(position_state["position"])
+
+    if position == 1:
+        return float(row["high"]) >= trigger_price
+    if position == -1:
+        return float(row["low"]) <= trigger_price
+    return False
+
+
+def _move_stop_to_break_even(position_state: dict) -> None:
+    position = int(position_state["position"])
+    entry_price = float(position_state["entry_price"])
+
+    if position == 1:
+        position_state["stop_price"] = max(float(position_state["stop_price"]), entry_price)
     elif position == -1:
-        initial_risk = initial_stop - entry_price
+        position_state["stop_price"] = min(float(position_state["stop_price"]), entry_price)
 
-        if initial_risk <= 0:
-            return
+    position_state["be_triggered"] = True
 
-        trigger_price = entry_price - initial_risk
 
-        if float(row["low"]) <= trigger_price:
-            position_state["stop_price"] = min(float(position_state["stop_price"]), entry_price)
-            position_state["be_triggered"] = True
+def _apply_break_even_1r(row: pd.Series, position_state: dict) -> None:
+    if bool(position_state.get("be_triggered", False)):
+        return
+
+    trigger_price = _one_r_trigger_price(position_state)
+    if trigger_price is None:
+        return
+
+    if _reached_price(row, position_state, trigger_price):
+        _move_stop_to_break_even(position_state)
+
+
+def _apply_partial_50_at_1r_be(row: pd.Series, position_state: dict) -> None:
+    if bool(position_state.get("partial_taken", False)):
+        return
+
+    trigger_price = _one_r_trigger_price(position_state)
+    if trigger_price is None:
+        return
+
+    if not _reached_price(row, position_state, trigger_price):
+        return
+
+    position = int(position_state["position"])
+    entry_price = float(position_state["entry_price"])
+
+    position_state["partial_taken"] = True
+    position_state["partial_fraction"] = 0.5
+    position_state["remaining_fraction"] = 0.5
+    position_state["partial_exit_price"] = float(trigger_price)
+    position_state["partial_exit_time"] = row["_dt"]
+    position_state["partial_exit_reason"] = "PARTIAL_1R"
+    position_state["partial_gross_return"] = _gross_return_for_exit(position, entry_price, float(trigger_price))
+
+    _move_stop_to_break_even(position_state)
 
 
 def _apply_exit_policy(row: pd.Series, position_state: dict, exit_policy: str) -> None:
     if exit_policy == "fixed":
         return
-
     if exit_policy == "break_even_1r":
         _apply_break_even_1r(row, position_state)
+        return
+    if exit_policy == "partial_50_at_1r_be":
+        _apply_partial_50_at_1r_be(row, position_state)
         return
 
     raise ValueError(f"Unsupported exit_policy: {exit_policy}")
@@ -176,21 +261,6 @@ def run_trade_simulation(
     force_eod_exit: bool = True,
     exit_policy: str = "fixed",
 ) -> tuple[pd.Series, pd.Series, pd.DataFrame]:
-    """
-    Conservative single-position backtest.
-
-    Execution model:
-    - Entry at signal bar close.
-    - Stop/TP checked from the next bars using high/low.
-    - If stop and TP are touched in the same bar, stop is assumed first.
-    - Cost is charged on both entry and exit.
-    - If force_eod_exit=True, open positions are closed at the final bar of each trading day.
-    - exit_policy="fixed" preserves original behavior.
-    - exit_policy="break_even_1r" moves stop to entry after trade reaches +1R.
-      Conservative ordering: BE activation applies after checking the current bar exit,
-      so same-bar +1R/BE reversal is not credited.
-    """
-
     if exit_policy not in VALID_EXIT_POLICIES:
         raise ValueError(f"Invalid exit_policy={exit_policy}. Valid: {sorted(VALID_EXIT_POLICIES)}")
 
@@ -208,13 +278,17 @@ def run_trade_simulation(
 
         if int(state["position"]) != 0:
             close_price = float(row["close"])
+            position = int(state["position"])
+            entry_price = float(state["entry_price"])
 
-            if int(state["position"]) == 1:
-                unrealized = close_price / float(state["entry_price"]) - 1.0
-            else:
-                unrealized = float(state["entry_price"]) / close_price - 1.0
+            unrealized_full = _gross_return_for_exit(position, entry_price, close_price)
 
-            current_equity = cash_equity * (1 + unrealized)
+            partial_fraction = float(state.get("partial_fraction", 0.0))
+            remaining_fraction = float(state.get("remaining_fraction", 1.0))
+            partial_gross_return = float(state.get("partial_gross_return", 0.0))
+
+            unrealized_total = (partial_fraction * partial_gross_return) + (remaining_fraction * unrealized_full)
+            current_equity = cash_equity * (1 + unrealized_total)
 
             exit_hit, exit_price, exit_reason = _check_exit(row, state)
 
@@ -264,12 +338,18 @@ def run_trade_simulation(
                     "tp_price": float(row["exit_tp"]),
                     "setup": row.get("setup", ""),
                     "be_triggered": False,
+                    "partial_taken": False,
+                    "partial_fraction": 0.0,
+                    "remaining_fraction": 1.0,
+                    "partial_exit_price": None,
+                    "partial_exit_time": None,
+                    "partial_exit_reason": "",
+                    "partial_gross_return": 0.0,
                 }
 
         equity_values.append(current_equity)
 
     equity = pd.Series(equity_values, index=signals.index, name="equity")
-    returns = equity.pct_change().fillna(0.0)
     trade_returns_series = pd.Series(trade_returns, name="trade_returns")
     trades_df = pd.DataFrame(trades)
 

@@ -27,6 +27,49 @@ METRIC_COLUMNS = [
 ]
 
 
+def safe_float(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if math.isnan(out) or math.isinf(out):
+        return None
+
+    return out
+
+
+def clean_for_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): clean_for_json(v) for k, v in value.items()}
+
+    if isinstance(value, list):
+        return [clean_for_json(v) for v in value]
+
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+
+    # Handles numpy scalar types without importing numpy directly.
+    if hasattr(value, "item"):
+        try:
+            return clean_for_json(value.item())
+        except Exception:
+            pass
+
+    return value
+
+
 def read_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -69,7 +112,7 @@ def flatten_result_file(path: Path) -> list[dict[str, Any]]:
             "timeframe": timeframe,
             "strategy": strategy,
             "exit_policy": str(report.get("exit_policy", exit_policy)),
-            "cost_label": cost_label,
+            "cost_label": str(cost_label),
             "cost_per_side": float(report.get("cost_per_side", 0.0)),
             "csv_path": csv_path,
             "total_trades": int(report.get("total_trades", report.get("trades", 0))),
@@ -183,18 +226,21 @@ def compare_policy_vs_fixed(df: pd.DataFrame, policy: str) -> list[dict[str, Any
                 "timeframe": row["timeframe"],
                 "exit_policy": row["exit_policy"],
                 "cost_label": row["cost_label"],
-                "profit_factor": float(row["profit_factor"]),
+                "profit_factor": safe_float(row["profit_factor"]),
                 "fixed_profit_factor": safe_float(row.get("fixed_profit_factor")),
                 "delta_profit_factor": safe_float(row.get("delta_vs_fixed_profit_factor")),
-                "expectancy": float(row["expectancy"]),
+                "expectancy": safe_float(row["expectancy"]),
                 "fixed_expectancy": safe_float(row.get("fixed_expectancy")),
                 "delta_expectancy": safe_float(row.get("delta_vs_fixed_expectancy")),
-                "global_score": float(row["global_score"]),
+                "global_score": safe_float(row["global_score"]),
                 "fixed_global_score": safe_float(row.get("fixed_global_score")),
                 "delta_global_score": safe_float(row.get("delta_vs_fixed_global_score")),
-                "max_drawdown": float(row["max_drawdown"]),
+                "max_drawdown": safe_float(row["max_drawdown"]),
                 "fixed_max_drawdown": safe_float(row.get("fixed_max_drawdown")),
                 "delta_max_drawdown": safe_float(row.get("delta_vs_fixed_max_drawdown")),
+                "win_rate": safe_float(row["win_rate"]),
+                "fixed_win_rate": safe_float(row.get("fixed_win_rate")),
+                "delta_win_rate": safe_float(row.get("delta_vs_fixed_win_rate")),
                 "total_trades": int(row["total_trades"]),
                 "tp_hits": int(row["tp_hits"]),
                 "stop_hits": int(row["stop_hits"]),
@@ -204,7 +250,46 @@ def compare_policy_vs_fixed(df: pd.DataFrame, policy: str) -> list[dict[str, Any
             }
         )
 
-    return sorted(rows, key=lambda item: item["global_score"], reverse=True)
+    return sorted(rows, key=lambda item: item["global_score"] or -999, reverse=True)
+
+
+def compare_all_policies_vs_fixed(df: pd.DataFrame) -> dict[str, list[dict[str, Any]]]:
+    policies = sorted(
+        policy for policy in df["exit_policy"].unique().tolist()
+        if policy != "fixed"
+    )
+
+    return {
+        policy: compare_policy_vs_fixed(df, policy)
+        for policy in policies
+    }
+
+
+def summarize_policy_cost_1x(df: pd.DataFrame) -> list[dict[str, Any]]:
+    cost_1x = df[df["cost_label"] == "cost_1x"].copy()
+    rows = []
+
+    for (timeframe, exit_policy), group in cost_1x.groupby(["timeframe", "exit_policy"]):
+        row = group.iloc[0]
+        rows.append(
+            {
+                "timeframe": str(timeframe),
+                "exit_policy": str(exit_policy),
+                "profit_factor": safe_float(row["profit_factor"]),
+                "expectancy": safe_float(row["expectancy"]),
+                "global_score": safe_float(row["global_score"]),
+                "max_drawdown": safe_float(row["max_drawdown"]),
+                "win_rate": safe_float(row["win_rate"]),
+                "total_trades": int(row["total_trades"]),
+                "tp_hits": int(row["tp_hits"]),
+                "stop_hits": int(row["stop_hits"]),
+                "be_exits": int(row["be_exits"]),
+                "eod_exits": int(row["eod_exits"]),
+                "be_triggered_count": int(row["be_triggered_count"]),
+            }
+        )
+
+    return sorted(rows, key=lambda item: item["global_score"] or -999, reverse=True)
 
 
 def build_recommendations(df: pd.DataFrame) -> list[str]:
@@ -224,41 +309,49 @@ def build_recommendations(df: pd.DataFrame) -> list[str]:
         f"global_score={best['global_score']:.4f}."
     )
 
-    be_rows = cost_1x[cost_1x["exit_policy"] == "break_even_1r"].copy()
+    policies = sorted(
+        policy for policy in cost_1x["exit_policy"].unique().tolist()
+        if policy != "fixed"
+    )
 
-    if not be_rows.empty:
-        improved_score = be_rows[be_rows["delta_vs_fixed_global_score"] > 0]
-        improved_pf = be_rows[be_rows["delta_vs_fixed_profit_factor"] > 0]
-        improved_expectancy = be_rows[be_rows["delta_vs_fixed_expectancy"] > 0]
+    for policy in policies:
+        policy_rows = cost_1x[cost_1x["exit_policy"] == policy].copy()
+
+        if policy_rows.empty:
+            continue
+
+        improved_score = policy_rows[policy_rows["delta_vs_fixed_global_score"] > 0]
+        improved_pf = policy_rows[policy_rows["delta_vs_fixed_profit_factor"] > 0]
+        improved_expectancy = policy_rows[policy_rows["delta_vs_fixed_expectancy"] > 0]
+        improved_dd = policy_rows[policy_rows["delta_vs_fixed_max_drawdown"] < 0]
 
         if len(improved_score):
             tfs = ", ".join(improved_score["timeframe"].astype(str).tolist())
             recommendations.append(
-                f"break_even_1r improved global_score versus fixed in: {tfs}."
+                f"{policy} improved global_score versus fixed in: {tfs}."
             )
 
         if len(improved_pf):
             tfs = ", ".join(improved_pf["timeframe"].astype(str).tolist())
             recommendations.append(
-                f"break_even_1r improved profit_factor versus fixed in: {tfs}."
+                f"{policy} improved profit_factor versus fixed in: {tfs}."
             )
 
         if len(improved_expectancy):
             tfs = ", ".join(improved_expectancy["timeframe"].astype(str).tolist())
             recommendations.append(
-                f"break_even_1r improved expectancy versus fixed in: {tfs}."
+                f"{policy} improved expectancy versus fixed in: {tfs}."
             )
 
-        if float(be_rows["profit_factor"].max()) < 1.0:
+        if len(improved_dd):
+            tfs = ", ".join(improved_dd["timeframe"].astype(str).tolist())
             recommendations.append(
-                "break_even_1r is only a marginal improvement. "
-                "It does not create positive edge yet."
+                f"{policy} reduced max_drawdown versus fixed in: {tfs}."
             )
 
-        if int(be_rows["be_triggered_count"].sum()) > 0:
+        if float(policy_rows["profit_factor"].max()) < 1.0:
             recommendations.append(
-                "BE triggers are active, so the policy is working technically. "
-                "Next test should be partial_50_at_1r_be."
+                f"{policy} does not create positive edge yet; max PF remains below 1.0."
             )
 
     if float(cost_1x["profit_factor"].max()) < 1.0:
@@ -266,39 +359,23 @@ def build_recommendations(df: pd.DataFrame) -> list[str]:
             "No exit policy currently passes PF > 1.0. Do not promote to paper/live."
         )
 
-    recommendations.append(
-        "Recommended next experiment: implement partial_50_at_1r_be and compare it "
-        "against fixed and break_even_1r."
-    )
+    best_policy = str(best["exit_policy"])
+
+    if best_policy == "break_even_1r":
+        recommendations.append(
+            "Next recommended experiment: add time-of-day filter on top of break_even_1r, "
+            "or test ATR trailing after +1R."
+        )
+    elif best_policy == "partial_50_at_1r_be":
+        recommendations.append(
+            "partial_50_at_1r_be is best by current score; next test should verify robustness across symbols."
+        )
+    else:
+        recommendations.append(
+            "Fixed remains competitive; prioritize entry/session filters before adding more exit complexity."
+        )
 
     return recommendations
-
-
-def safe_float(value: Any) -> float | None:
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return None
-
-    if math.isnan(out) or math.isinf(out):
-        return None
-
-    return out
-
-
-def clean_for_json(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {k: clean_for_json(v) for k, v in value.items()}
-
-    if isinstance(value, list):
-        return [clean_for_json(v) for v in value]
-
-    if isinstance(value, float):
-        if math.isnan(value) or math.isinf(value):
-            return None
-        return value
-
-    return value
 
 
 def save_outputs(
@@ -328,7 +405,6 @@ def main() -> None:
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
 
     args = parser.parse_args()
-
     symbol = args.symbol.upper()
 
     matrix = load_policy_matrix(
@@ -345,11 +421,9 @@ def main() -> None:
         "timeframes": sorted(matrix["timeframe"].unique().tolist()),
         "exit_policies": sorted(matrix["exit_policy"].unique().tolist()),
         "cost_labels": sorted(matrix["cost_label"].unique().tolist()),
+        "policy_summary_cost_1x": summarize_policy_cost_1x(matrix),
         "best_rows": best_rows(matrix),
-        "break_even_1r_vs_fixed_cost_1x": compare_policy_vs_fixed(
-            matrix,
-            "break_even_1r",
-        ),
+        "policies_vs_fixed_cost_1x": compare_all_policies_vs_fixed(matrix),
         "recommendations": build_recommendations(matrix),
     }
 

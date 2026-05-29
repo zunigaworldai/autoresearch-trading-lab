@@ -3,14 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 
-def _get_datetime_value(row: pd.Series, fallback_index) -> pd.Timestamp:
-    if "datetime" in row.index:
-        return pd.to_datetime(row["datetime"], errors="coerce")
-
-    if "timestamp" in row.index:
-        return pd.to_datetime(row["timestamp"], errors="coerce")
-
-    return pd.to_datetime(fallback_index, errors="coerce")
+VALID_EXIT_POLICIES = {"fixed", "break_even_1r"}
 
 
 def _prepare_signals(signals: pd.DataFrame) -> pd.DataFrame:
@@ -40,9 +33,11 @@ def _reset_position() -> dict:
         "position": 0,
         "entry_price": None,
         "entry_time": None,
+        "initial_stop_price": None,
         "stop_price": None,
         "tp_price": None,
         "setup": None,
+        "be_triggered": False,
     }
 
 
@@ -79,15 +74,27 @@ def _close_trade(
             "setup": position_state["setup"],
             "entry": entry_price,
             "exit": exit_price,
-            "stop": position_state["stop_price"],
+            "stop": position_state.get("initial_stop_price", position_state["stop_price"]),
+            "final_stop": position_state["stop_price"],
             "tp": position_state["tp_price"],
             "exit_reason": exit_reason,
+            "be_triggered": bool(position_state.get("be_triggered", False)),
             "gross_return": gross_return,
             "net_return": net_return,
         }
     )
 
     return net_return
+
+
+def _stop_exit_reason(position_state: dict) -> str:
+    entry_price = float(position_state["entry_price"])
+    stop_price = float(position_state["stop_price"])
+
+    if bool(position_state.get("be_triggered", False)) and abs(stop_price - entry_price) < 1e-9:
+        return "BE"
+
+    return "STOP"
 
 
 def _check_exit(
@@ -103,7 +110,7 @@ def _check_exit(
         tp_hit = float(row["high"]) >= tp_price
 
         if stop_hit or tp_hit:
-            exit_reason = "STOP" if stop_hit else "TP"
+            exit_reason = _stop_exit_reason(position_state) if stop_hit else "TP"
             exit_price = stop_price if stop_hit else tp_price
             return True, exit_price, exit_reason
 
@@ -112,17 +119,62 @@ def _check_exit(
         tp_hit = float(row["low"]) <= tp_price
 
         if stop_hit or tp_hit:
-            exit_reason = "STOP" if stop_hit else "TP"
+            exit_reason = _stop_exit_reason(position_state) if stop_hit else "TP"
             exit_price = stop_price if stop_hit else tp_price
             return True, exit_price, exit_reason
 
     return False, None, None
 
 
+def _apply_break_even_1r(row: pd.Series, position_state: dict) -> None:
+    if bool(position_state.get("be_triggered", False)):
+        return
+
+    position = int(position_state["position"])
+    entry_price = float(position_state["entry_price"])
+    initial_stop = float(position_state["initial_stop_price"])
+
+    if position == 1:
+        initial_risk = entry_price - initial_stop
+
+        if initial_risk <= 0:
+            return
+
+        trigger_price = entry_price + initial_risk
+
+        if float(row["high"]) >= trigger_price:
+            position_state["stop_price"] = max(float(position_state["stop_price"]), entry_price)
+            position_state["be_triggered"] = True
+
+    elif position == -1:
+        initial_risk = initial_stop - entry_price
+
+        if initial_risk <= 0:
+            return
+
+        trigger_price = entry_price - initial_risk
+
+        if float(row["low"]) <= trigger_price:
+            position_state["stop_price"] = min(float(position_state["stop_price"]), entry_price)
+            position_state["be_triggered"] = True
+
+
+def _apply_exit_policy(row: pd.Series, position_state: dict, exit_policy: str) -> None:
+    if exit_policy == "fixed":
+        return
+
+    if exit_policy == "break_even_1r":
+        _apply_break_even_1r(row, position_state)
+        return
+
+    raise ValueError(f"Unsupported exit_policy: {exit_policy}")
+
+
 def run_trade_simulation(
     signals: pd.DataFrame,
     cost_per_side: float = 0.0005,
     force_eod_exit: bool = True,
+    exit_policy: str = "fixed",
 ) -> tuple[pd.Series, pd.Series, pd.DataFrame]:
     """
     Conservative single-position backtest.
@@ -131,9 +183,16 @@ def run_trade_simulation(
     - Entry at signal bar close.
     - Stop/TP checked from the next bars using high/low.
     - If stop and TP are touched in the same bar, stop is assumed first.
-    - Cost is charged both entry and exit.
+    - Cost is charged on both entry and exit.
     - If force_eod_exit=True, open positions are closed at the final bar of each trading day.
+    - exit_policy="fixed" preserves original behavior.
+    - exit_policy="break_even_1r" moves stop to entry after trade reaches +1R.
+      Conservative ordering: BE activation applies after checking the current bar exit,
+      so same-bar +1R/BE reversal is not credited.
     """
+
+    if exit_policy not in VALID_EXIT_POLICIES:
+        raise ValueError(f"Invalid exit_policy={exit_policy}. Valid: {sorted(VALID_EXIT_POLICIES)}")
 
     signals = _prepare_signals(signals)
 
@@ -144,7 +203,7 @@ def run_trade_simulation(
     cash_equity = 1.0
     state = _reset_position()
 
-    for i, row in signals.iterrows():
+    for _, row in signals.iterrows():
         current_equity = cash_equity
 
         if int(state["position"]) != 0:
@@ -174,20 +233,23 @@ def run_trade_simulation(
                 current_equity = cash_equity
                 state = _reset_position()
 
-            elif force_eod_exit and bool(row["_is_eod_bar"]):
-                net_return = _close_trade(
-                    trades=trades,
-                    trade_returns=trade_returns,
-                    position_state=state,
-                    exit_time=row["_dt"],
-                    exit_price=close_price,
-                    exit_reason="EOD",
-                    cost_per_side=cost_per_side,
-                )
+            else:
+                _apply_exit_policy(row, state, exit_policy)
 
-                cash_equity *= 1 + net_return
-                current_equity = cash_equity
-                state = _reset_position()
+                if force_eod_exit and bool(row["_is_eod_bar"]):
+                    net_return = _close_trade(
+                        trades=trades,
+                        trade_returns=trade_returns,
+                        position_state=state,
+                        exit_time=row["_dt"],
+                        exit_price=close_price,
+                        exit_reason="EOD",
+                        cost_per_side=cost_per_side,
+                    )
+
+                    cash_equity *= 1 + net_return
+                    current_equity = cash_equity
+                    state = _reset_position()
 
         allow_new_entry = not (force_eod_exit and bool(row["_is_eod_bar"]))
 
@@ -197,9 +259,11 @@ def run_trade_simulation(
                     "position": int(row["entry_signal"]),
                     "entry_price": float(row["close"]),
                     "entry_time": row["_dt"],
+                    "initial_stop_price": float(row["exit_stop"]),
                     "stop_price": float(row["exit_stop"]),
                     "tp_price": float(row["exit_tp"]),
                     "setup": row.get("setup", ""),
+                    "be_triggered": False,
                 }
 
         equity_values.append(current_equity)

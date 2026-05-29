@@ -189,7 +189,9 @@ def run_trade_simulation(
                 current_equity = cash_equity
                 state = _reset_position()
 
-        if int(state["position"]) == 0 and int(row["entry_signal"]) != 0:
+        allow_new_entry = not (force_eod_exit and bool(row["_is_eod_bar"]))
+
+        if allow_new_entry and int(state["position"]) == 0 and int(row["entry_signal"]) != 0:
             if not pd.isna(row["exit_stop"]) and not pd.isna(row["exit_tp"]):
                 state = {
                     "position": int(row["entry_signal"]),

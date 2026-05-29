@@ -48,3 +48,7 @@ data/processed/**/*.csv
 # Historical backtest generated outputs
 outputs/backtests/**/*.csv
 outputs/backtests/**/*.json
+
+# Research generated outputs
+outputs/research/**/*.csv
+outputs/research/**/*.json

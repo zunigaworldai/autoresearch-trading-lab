@@ -1,0 +1,3 @@
+[submodule "vendor/karpathy-autoresearch"]
+	path = vendor/karpathy-autoresearch
+	url = https://github.com/karpathy/autoresearch

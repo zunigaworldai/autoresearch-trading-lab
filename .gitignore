@@ -57,3 +57,6 @@ outputs/research/**/*.json
 data/raw/
 data/processed/
 outputs/research/data_expansion/*.log
+
+# AutoResearch generated reports
+outputs/research/autoresearch/

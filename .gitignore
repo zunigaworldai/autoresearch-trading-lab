@@ -52,3 +52,8 @@ outputs/backtests/**/*.json
 # Research generated outputs
 outputs/research/**/*.csv
 outputs/research/**/*.json
+
+# Historical market data - do not commit
+data/raw/
+data/processed/
+outputs/research/data_expansion/*.log

@@ -60,3 +60,6 @@ outputs/research/data_expansion/*.log
 
 # AutoResearch generated reports
 outputs/research/autoresearch/
+
+# Research generated outputs
+outputs/research/

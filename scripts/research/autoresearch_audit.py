@@ -260,7 +260,7 @@ def main() -> None:
     md.extend(["", "## Blocked Promotions", ""])
     md.extend([f"- {x}" for x in blocked])
     REPORT_JSON.write_text(json.dumps(clean(report), indent=2), encoding="utf-8")
-    REPORT_MD.write_text("\\n".join(md), encoding="utf-8")
+    REPORT_MD.write_text("\n".join(md), encoding="utf-8")
     print(f"Wrote {REPORT_MD}")
     print(f"Wrote {REPORT_JSON}")
 

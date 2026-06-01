@@ -189,10 +189,8 @@ def business_day_count(start: pd.Timestamp, end: pd.Timestamp) -> int:
 
 
 def classify_portfolio(summary: dict[str, Any]) -> str:
-    if summary["total_trades"] < 100:
-        return "watch_low_total_sample"
-    if summary["trades_per_week_calendar"] < 5:
-        return "watch_low_portfolio_frequency"
+    if summary["pf"] <= 1.0 or summary["expectancy"] <= 0:
+        return "reject_no_edge"
     if summary["years_negative"] > 0:
         return "reject_negative_year"
     if summary["negative_month_pct_calendar"] > 0.35:
@@ -203,6 +201,10 @@ def classify_portfolio(summary: dict[str, Any]) -> str:
         return "watch_high_drawdown"
     if summary["pf"] <= 1.20:
         return "watch_low_pf"
+    if summary["total_trades"] < 100:
+        return "watch_low_total_sample"
+    if summary["trades_per_week_calendar"] < 5:
+        return "watch_low_portfolio_frequency"
     return "candidate_portfolio_walk_forward"
 
 

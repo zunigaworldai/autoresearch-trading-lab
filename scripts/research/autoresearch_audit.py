@@ -168,6 +168,53 @@ def collect_time_windows(lines: list[str]) -> pd.DataFrame:
     return cost1
 
 
+def collect_orb_outputs(lines: list[str]) -> pd.DataFrame:
+    files = []
+    files.extend(sorted((ROOT / "outputs/research/opening_range_breakout").glob("*_opening_range_breakout.csv")))
+    files.extend(sorted((ROOT / "outputs/research/opening_range_breakout_fast").glob("*_opening_range_breakout_fast.csv")))
+
+    frames = [read_csv(p) for p in files]
+    frames = [df for df in frames if not df.empty]
+    if not frames:
+        return pd.DataFrame()
+
+    df = pd.concat(frames, ignore_index=True)
+    cost1 = df[df["cost_label"] == "cost_1x"].copy() if "cost_label" in df.columns else df.copy()
+
+    lines.append(f"- ORB files: {len(files)}")
+    lines.append(f"- ORB rows cost_1x: {len(cost1)}")
+    if "decision" in cost1.columns:
+        lines.append(f"- ORB decision counts: {cost1['decision'].value_counts().to_dict()}")
+
+    if {"pf", "expectancy"}.issubset(cost1.columns):
+        positive = cost1[(cost1["pf"] > 1.0) & (cost1["expectancy"] > 0)].copy()
+        lines.append(f"- ORB positive-edge rows before yearly/monthly filters: {len(positive)}")
+        if not positive.empty and "years_negative" in positive.columns:
+            clean_positive = positive[positive["years_negative"] == 0]
+            lines.append(f"- ORB positive-edge rows with zero negative years: {len(clean_positive)}")
+
+    sort_cols = [c for c in ["strategy_score", "pf", "expectancy", "trades"] if c in cost1.columns]
+    if sort_cols:
+        top = cost1.sort_values(sort_cols, ascending=[False] * len(sort_cols)).head(12)
+        for _, r in top.iterrows():
+            label = r.get("entry_window_label", r.get("window_label", "NA"))
+            lines.append(
+                "- ORB "
+                f"{r.get('symbol', 'NA')} {r.get('variant', 'NA')} "
+                f"OR={r.get('or_minutes', 'NA')} {label} | "
+                f"trades={r.get('trades', 'NA')} "
+                f"TPM={fnum(r.get('trades_per_calendar_month'), 2)} "
+                f"PF={fnum(r.get('pf'))} "
+                f"Exp={fnum(r.get('expectancy'), 6)} "
+                f"DD={fnum(r.get('max_drawdown'))} "
+                f"YearsNeg={r.get('years_negative', 'NA')} "
+                f"MonthsNeg={r.get('months_negative', 'NA')}/{r.get('months_total_active', 'NA')} "
+                f"Decision={r.get('decision', 'NA')}"
+            )
+
+    return cost1
+
+
 def collect_portfolios(lines: list[str]) -> list[dict[str, Any]]:
     reports: list[dict[str, Any]] = []
     for path in sorted((ROOT / "outputs/research/portfolio_frequency").glob("*_portfolio_report.json")):
@@ -197,15 +244,27 @@ def collect_portfolios(lines: list[str]) -> list[dict[str, Any]]:
     return reports
 
 
-def blocked_promotions(time_df: pd.DataFrame, portfolios: list[dict[str, Any]]) -> list[str]:
+def blocked_promotions(time_df: pd.DataFrame, orb_df: pd.DataFrame, portfolios: list[dict[str, Any]]) -> list[str]:
     blocked = {"current_vwap_vol_keltner_family"}
+
     if not time_df.empty and {"pf", "expectancy"}.issubset(time_df.columns):
         bad = time_df[(time_df["pf"] <= 1.0) | (time_df["expectancy"] <= 0)]
         if len(bad):
             blocked.add("vwap_vol_keltner_time_window_expansion")
+
+    if not orb_df.empty:
+        if "decision" in orb_df.columns:
+            if not (orb_df["decision"] == "candidate_review").any():
+                blocked.add("opening_range_breakout_v1")
+        if {"pf", "expectancy", "years_negative"}.issubset(orb_df.columns):
+            clean = orb_df[(orb_df["pf"] > 1.0) & (orb_df["expectancy"] > 0) & (orb_df["years_negative"] == 0)]
+            if clean.empty:
+                blocked.add("opening_range_breakout_v1_no_zero_negative_year_candidate")
+
     for r in portfolios:
         if float(r.get("pf", 0) or 0) <= 1.0 or float(r.get("expectancy", 0) or 0) <= 0:
             blocked.add(str(r.get("label", "portfolio_unknown")))
+
     return sorted(blocked)
 
 
@@ -215,16 +274,21 @@ def main() -> None:
     add_monthly_weekly(findings)
     add_filter_combinations(findings)
     time_df = collect_time_windows(findings)
+    orb_df = collect_orb_outputs(findings)
     portfolios = collect_portfolios(findings)
-    blocked = blocked_promotions(time_df, portfolios)
+
+    blocked = blocked_promotions(time_df, orb_df, portfolios)
+
     recommendations = [
         "Keep live money BLOCKED.",
         "Keep paper trading BLOCKED until 5Y, monthly/weekly, cost stress, walk-forward, and portfolio-level checks pass.",
         "Current VWAP/VOL/Keltner family remains blocked as a production candidate.",
-        "Fix classifier ordering if PF<1 or negative expectancy appears as low-frequency instead of reject_no_edge.",
-        "Start a new strategy family experiment: Opening Range Breakout or VWAP Mean Reversion.",
+        "Opening Range Breakout v1/fast remains blocked because no zero-negative-year candidate was found.",
+        "Do not continue broad ORB brute-force without a new hypothesis; consider regime-specific ORB only if explicitly scoped.",
+        "Start the next family experiment: VWAP Mean Reversion.",
         "For any new family, evaluate full RTH time windows per symbol first, then portfolio frequency and stability.",
     ]
+
     report = {
         "created": datetime.now(timezone.utc).isoformat(),
         "status": {
@@ -237,6 +301,7 @@ def main() -> None:
         "recommendations": recommendations,
         "blocked_promotions": blocked,
     }
+
     md = [
         "# Karpathy AutoResearch Trading Audit",
         "",
@@ -259,8 +324,10 @@ def main() -> None:
     md.extend([f"- {x}" for x in recommendations])
     md.extend(["", "## Blocked Promotions", ""])
     md.extend([f"- {x}" for x in blocked])
+
     REPORT_JSON.write_text(json.dumps(clean(report), indent=2), encoding="utf-8")
     REPORT_MD.write_text("\n".join(md), encoding="utf-8")
+
     print(f"Wrote {REPORT_MD}")
     print(f"Wrote {REPORT_JSON}")
 

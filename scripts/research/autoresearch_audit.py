@@ -13,29 +13,30 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = ROOT / "outputs/research/autoresearch"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+
 REPORT_MD = OUT_DIR / "latest_research_audit.md"
 REPORT_JSON = OUT_DIR / "latest_research_audit.json"
 
 
-def clean(x: Any) -> Any:
-    if isinstance(x, dict):
-        return {str(k): clean(v) for k, v in x.items()}
-    if isinstance(x, list):
-        return [clean(v) for v in x]
-    if isinstance(x, (pd.Timestamp, pd.Period)):
-        return str(x)
-    if isinstance(x, bool):
-        return x
-    if isinstance(x, int):
-        return x
-    if isinstance(x, float):
-        return None if math.isnan(x) or math.isinf(x) else x
-    if hasattr(x, "item"):
+def clean(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): clean(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [clean(v) for v in value]
+    if isinstance(value, (pd.Timestamp, pd.Period)):
+        return str(value)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return None if math.isnan(value) or math.isinf(value) else value
+    if hasattr(value, "item"):
         try:
-            return clean(x.item())
+            return clean(value.item())
         except Exception:
-            return str(x)
-    return x
+            return str(value)
+    return value
 
 
 def read_json(path: Path) -> dict[str, Any] | None:
@@ -52,42 +53,38 @@ def read_csv(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def fnum(x: Any, n: int = 4) -> str:
+def fnum(value: Any, digits: int = 4) -> str:
     try:
-        y = float(x)
+        number = float(value)
     except Exception:
         return "NA"
-    if math.isnan(y) or math.isinf(y):
+    if math.isnan(number) or math.isinf(number):
         return "NA"
-    return f"{y:.{n}f}"
+    return f"{number:.{digits}f}"
 
 
-def add_json_rankings(lines: list[str]) -> None:
-    paths = [
-        ("Strict 5Y ranking", ROOT / "outputs/research/rankings_5y/multi_symbol_5m_break_even_1r_setup_ranking_report.json"),
-        ("Diagnostic 5Y ranking", ROOT / "outputs/research/rankings_5y_diagnostic/multi_symbol_5m_break_even_1r_setup_ranking_report.json"),
-        ("Monthly/weekly consistency", ROOT / "outputs/research/monthly_weekly_consistency/monthly_weekly_candidate_report.json"),
-    ]
+def add_json_report(lines: list[str], label: str, path: Path) -> None:
+    data = read_json(path)
+    if not data:
+        return
 
-    for label, path in paths:
-        data = read_json(path)
-        if not data:
-            continue
-        counts = data.get("decision_counts_cost_1x") or data.get("decision_counts") or {}
-        lines.append(f"- {label}: {counts}")
+    counts = data.get("decision_counts_cost_1x") or data.get("decision_counts") or {}
+    lines.append(f"- {label}: {counts}")
 
-        top = data.get("top_candidates_cost_1x") or data.get("top_all_cost_1x") or data.get("top_summary") or []
-        for r in top[:5]:
-            lines.append(
-                "  - "
-                f"{r.get('symbol', r.get('label', 'NA'))} "
-                f"{r.get('setup_combo', '')} {r.get('window_label', '')} | "
-                f"trades={r.get('total_trades', r.get('trades', 'NA'))} "
-                f"PF={fnum(r.get('profit_factor', r.get('pf')))} "
-                f"Exp={fnum(r.get('expectancy'), 6)} "
-                f"DD={fnum(r.get('max_drawdown'))} "
-                f"Decision={r.get('decision', 'NA')}"
-            )
+    top = data.get("top_candidates_cost_1x") or data.get("top_all_cost_1x") or data.get("top_summary") or []
+    for row in top[:5]:
+        lines.append(
+            "  - "
+            f"{row.get('symbol', row.get('label', 'NA'))} "
+            f"{row.get('variant', row.get('setup_combo', ''))} "
+            f"{row.get('window_label', row.get('entry_window_label', ''))} | "
+            f"trades={row.get('total_trades', row.get('trades', 'NA'))} "
+            f"PF={fnum(row.get('profit_factor', row.get('pf')))} "
+            f"Exp={fnum(row.get('expectancy'), 6)} "
+            f"DD={fnum(row.get('max_drawdown'))} "
+            f"YearsNeg={row.get('years_negative', 'NA')} "
+            f"Decision={row.get('decision', 'NA')}"
+        )
 
 
 def collect_csv_family(
@@ -98,8 +95,8 @@ def collect_csv_family(
     score_col: str = "strategy_score",
 ) -> pd.DataFrame:
     files = sorted((ROOT / folder).glob(pattern))
-    frames = [read_csv(p) for p in files]
-    frames = [df for df in frames if not df.empty]
+    frames = [read_csv(file) for file in files]
+    frames = [frame for frame in frames if not frame.empty]
 
     if not frames:
         lines.append(f"- {family_name}: no CSV outputs found.")
@@ -118,35 +115,36 @@ def collect_csv_family(
         positive = cost1[(cost1["pf"] > 1.0) & (cost1["expectancy"] > 0)].copy()
         lines.append(f"- {family_name} positive-edge rows before yearly/monthly filters: {len(positive)}")
         if "years_negative" in positive.columns:
-            zero_neg_years = positive[positive["years_negative"] == 0]
-            lines.append(f"- {family_name} positive-edge rows with zero negative years: {len(zero_neg_years)}")
+            zero_negative_years = positive[positive["years_negative"] == 0]
+            lines.append(f"- {family_name} positive-edge rows with zero negative years: {len(zero_negative_years)}")
 
-    sort_cols = [c for c in [score_col, "pf", "expectancy", "trades"] if c in cost1.columns]
+    sort_cols = [col for col in [score_col, "pf", "expectancy", "trades"] if col in cost1.columns]
     if sort_cols:
         top = cost1.sort_values(sort_cols, ascending=[False] * len(sort_cols)).head(12)
-        for _, r in top.iterrows():
-            variant = r.get("variant", r.get("setup_combo", "NA"))
-            window = r.get("entry_window_label", r.get("window_label", "NA"))
-            or_part = f" OR={r.get('or_minutes')}" if "or_minutes" in r.index else ""
+        for _, row in top.iterrows():
+            variant = row.get("variant", row.get("setup_combo", "NA"))
+            window = row.get("entry_window_label", row.get("window_label", "NA"))
+            or_part = f" OR={row.get('or_minutes')}" if "or_minutes" in row.index and pd.notna(row.get("or_minutes")) else ""
             lines.append(
                 f"- {family_name} "
-                f"{r.get('symbol', 'NA')} {variant}{or_part} {window} "
-                f"exit={r.get('exit_policy', 'NA')} | "
-                f"trades={r.get('trades', r.get('total_trades', 'NA'))} "
-                f"TPM={fnum(r.get('trades_per_calendar_month', r.get('trades_per_month')), 2)} "
-                f"PF={fnum(r.get('pf', r.get('profit_factor')))} "
-                f"Exp={fnum(r.get('expectancy'), 6)} "
-                f"DD={fnum(r.get('max_drawdown'))} "
-                f"YearsNeg={r.get('years_negative', 'NA')} "
-                f"MonthsNeg={r.get('months_negative', 'NA')}/{r.get('months_total_active', 'NA')} "
-                f"Decision={r.get('decision', 'NA')}"
+                f"{row.get('symbol', 'NA')} {variant}{or_part} {window} "
+                f"exit={row.get('exit_policy', 'NA')} | "
+                f"trades={row.get('trades', row.get('total_trades', 'NA'))} "
+                f"TPM={fnum(row.get('trades_per_calendar_month', row.get('trades_per_month')), 2)} "
+                f"PF={fnum(row.get('pf', row.get('profit_factor')))} "
+                f"Exp={fnum(row.get('expectancy'), 6)} "
+                f"DD={fnum(row.get('max_drawdown'))} "
+                f"YearsNeg={row.get('years_negative', 'NA')} "
+                f"MonthsNeg={row.get('months_negative', 'NA')}/{row.get('months_total_active', 'NA')} "
+                f"Decision={row.get('decision', 'NA')}"
             )
 
     return cost1
 
 
 def collect_portfolios(lines: list[str]) -> list[dict[str, Any]]:
-    reports = []
+    reports: list[dict[str, Any]] = []
+
     for path in sorted((ROOT / "outputs/research/portfolio_frequency").glob("*_portfolio_report.json")):
         data = read_json(path)
         if data:
@@ -159,20 +157,20 @@ def collect_portfolios(lines: list[str]) -> list[dict[str, Any]]:
     lines.append(f"- Portfolio reports: {len(reports)}")
     lines.append(f"- Portfolio decision counts: {dict(Counter([r.get('decision', 'NA') for r in reports]))}")
 
-    for r in reports:
+    for row in reports:
         lines.append(
             "- Portfolio "
-            f"{r.get('label', 'NA')} | "
-            f"symbols={r.get('symbols_count', 'NA')} "
-            f"trades={r.get('total_trades', 'NA')} "
-            f"TPW={fnum(r.get('trades_per_week_calendar'), 2)} "
-            f"TPM={fnum(r.get('trades_per_calendar_month'), 2)} "
-            f"PF={fnum(r.get('pf'))} "
-            f"Exp={fnum(r.get('expectancy'), 6)} "
-            f"DD={fnum(r.get('max_drawdown_trade_sequence'))} "
-            f"YearsNeg={r.get('years_negative', 'NA')} "
-            f"WorstMonth={fnum(r.get('worst_month_return'))} "
-            f"Decision={r.get('decision', 'NA')}"
+            f"{row.get('label', 'NA')} | "
+            f"symbols={row.get('symbols_count', 'NA')} "
+            f"trades={row.get('total_trades', 'NA')} "
+            f"TPW={fnum(row.get('trades_per_week_calendar'), 2)} "
+            f"TPM={fnum(row.get('trades_per_calendar_month'), 2)} "
+            f"PF={fnum(row.get('pf'))} "
+            f"Exp={fnum(row.get('expectancy'), 6)} "
+            f"DD={fnum(row.get('max_drawdown_trade_sequence'))} "
+            f"YearsNeg={row.get('years_negative', 'NA')} "
+            f"WorstMonth={fnum(row.get('worst_month_return'))} "
+            f"Decision={row.get('decision', 'NA')}"
         )
 
     return reports
@@ -197,7 +195,22 @@ def block_if_no_candidate(blocked: set[str], name: str, df: pd.DataFrame) -> Non
 
 def main() -> None:
     findings: list[str] = []
-    add_json_rankings(findings)
+
+    add_json_report(
+        findings,
+        "Strict 5Y ranking",
+        ROOT / "outputs/research/rankings_5y/multi_symbol_5m_break_even_1r_setup_ranking_report.json",
+    )
+    add_json_report(
+        findings,
+        "Diagnostic 5Y ranking",
+        ROOT / "outputs/research/rankings_5y_diagnostic/multi_symbol_5m_break_even_1r_setup_ranking_report.json",
+    )
+    add_json_report(
+        findings,
+        "Monthly/weekly consistency",
+        ROOT / "outputs/research/monthly_weekly_consistency/monthly_weekly_candidate_report.json",
+    )
 
     time_df = collect_csv_family(
         findings,
@@ -206,42 +219,51 @@ def main() -> None:
         "*_time_windows_setup_combo.csv",
         score_col="window_score",
     )
-
-    orb_full = collect_csv_family(
+    orb_df = collect_csv_family(
         findings,
         "Opening Range Breakout",
         "outputs/research/opening_range_breakout",
         "*_opening_range_breakout.csv",
-        score_col="strategy_score",
     )
-
-    orb_fast = collect_csv_family(
+    orb_fast_df = collect_csv_family(
         findings,
         "Opening Range Breakout Fast",
         "outputs/research/opening_range_breakout_fast",
         "*_opening_range_breakout_fast.csv",
-        score_col="strategy_score",
     )
-
-    vwap_mr = collect_csv_family(
+    vwap_mr_df = collect_csv_family(
         findings,
         "VWAP Mean Reversion",
         "outputs/research/vwap_mean_reversion",
         "*_vwap_mean_reversion.csv",
-        score_col="strategy_score",
+    )
+    rsi_bb_df = collect_csv_family(
+        findings,
+        "RSI Bollinger Mean Reversion",
+        "outputs/research/rsi_bollinger_mean_reversion",
+        "*_rsi_bollinger_mean_reversion.csv",
+    )
+    inverse_df = collect_csv_family(
+        findings,
+        "Inverse Signal Audit",
+        "outputs/research/inverse_signal_audit",
+        "*_inverse_signal_audit.csv",
     )
 
     portfolios = collect_portfolios(findings)
 
     blocked: set[str] = {"current_vwap_vol_keltner_family"}
-    block_if_no_candidate(blocked, "vwap_vol_keltner_time_window_expansion", time_df)
-    block_if_no_candidate(blocked, "opening_range_breakout_v1", orb_full)
-    block_if_no_candidate(blocked, "opening_range_breakout_fast_v1", orb_fast)
-    block_if_no_candidate(blocked, "vwap_mean_reversion_v1", vwap_mr)
 
-    for r in portfolios:
-        if float(r.get("pf", 0) or 0) <= 1.0 or float(r.get("expectancy", 0) or 0) <= 0:
-            blocked.add(str(r.get("label", "portfolio_unknown")))
+    block_if_no_candidate(blocked, "vwap_vol_keltner_time_window_expansion", time_df)
+    block_if_no_candidate(blocked, "opening_range_breakout_v1", orb_df)
+    block_if_no_candidate(blocked, "opening_range_breakout_fast_v1", orb_fast_df)
+    block_if_no_candidate(blocked, "vwap_mean_reversion_v1", vwap_mr_df)
+    block_if_no_candidate(blocked, "rsi_bollinger_mean_reversion_v1", rsi_bb_df)
+    block_if_no_candidate(blocked, "inverse_signal_audit_v1", inverse_df)
+
+    for row in portfolios:
+        if float(row.get("pf", 0) or 0) <= 1.0 or float(row.get("expectancy", 0) or 0) <= 0:
+            blocked.add(str(row.get("label", "portfolio_unknown")))
 
     recommendations = [
         "Keep live money BLOCKED.",
@@ -249,8 +271,10 @@ def main() -> None:
         "Current VWAP/VOL/Keltner family remains blocked as a production candidate.",
         "Opening Range Breakout v1/fast remains blocked unless a new regime-specific hypothesis is defined.",
         "VWAP Mean Reversion v1 remains blocked; QQQ evidence is strongly negative with both partial_50_at_1r_be and fixed exits.",
-        "Next recommended experiment: RSI + Bollinger Bands Mean Reversion with sideways-regime filter.",
-        "Alternative diagnostic: inverse-signal audit for VWAP MR to check whether the current conditions capture continuation instead of reversion.",
+        "RSI + Bollinger Mean Reversion v1 remains blocked; QQQ evidence has no positive expectancy.",
+        "Inverse-signal audit remains blocked; inversion did not convert the failed mean-reversion signals into profitable continuation.",
+        "Next recommended family: VWAP reclaim / VWAP continuation with trend, volume, and session filters.",
+        "Alternative next family: Opening drive continuation or EMA pullback trend scalping.",
     ]
 
     report = {
@@ -283,9 +307,9 @@ def main() -> None:
     ]
     md.extend(findings or ["- No research outputs found."])
     md.extend(["", "## Recommendations", ""])
-    md.extend([f"- {x}" for x in recommendations])
+    md.extend([f"- {item}" for item in recommendations])
     md.extend(["", "## Blocked Promotions", ""])
-    md.extend([f"- {x}" for x in sorted(blocked)])
+    md.extend([f"- {item}" for item in sorted(blocked)])
 
     REPORT_JSON.write_text(json.dumps(clean(report), indent=2), encoding="utf-8")
     REPORT_MD.write_text("\n".join(md), encoding="utf-8")

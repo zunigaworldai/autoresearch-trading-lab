@@ -288,6 +288,7 @@ def main() -> None:
         ("VWAP Reclaim Continuation", "outputs/research/vwap_reclaim_continuation", "*_vwap_reclaim_continuation.csv", "strategy_score", "vwap_reclaim_continuation_v1"),
         ("Opening Drive Continuation", "outputs/research/opening_drive_continuation", "*_opening_drive_continuation.csv", "strategy_score", "opening_drive_continuation_v1"),
         ("EMA Pullback Trend Scalping", "outputs/research/ema_pullback_trend_scalping", "*_ema_pullback_trend_scalping.csv", "strategy_score", "ema_pullback_trend_scalping_v1"),
+        ("Gap Continuation/Fade", "outputs/research/gap_continuation_fade", "*_gap_continuation_fade.csv", "strategy_score", "gap_continuation_fade_v1"),
     ]
 
     blocked: set[str] = {"current_vwap_vol_keltner_family"}
@@ -306,6 +307,14 @@ def main() -> None:
     )
     block_if_cost_stress_fails(blocked, "opening_drive_continuation_v1", opening_drive_stress)
 
+    gap_stress = collect_cost_stress(
+        findings,
+        "Gap Continuation/Fade",
+        "outputs/research/gap_continuation_fade",
+        "AAPL_5m_partial_50_at_1r_be_gap_continuation_fade.csv",
+    )
+    block_if_cost_stress_fails(blocked, "gap_continuation_fade_v1", gap_stress)
+
     portfolios = collect_portfolios(findings)
     for row in portfolios:
         if float(row.get("pf", 0) or 0) <= 1.0 or float(row.get("expectancy", 0) or 0) <= 0:
@@ -322,8 +331,9 @@ def main() -> None:
         "VWAP Reclaim / Continuation v1 remains blocked at multi-symbol level; no candidate_review rows were found.",
         "Opening Drive Continuation v1 remains blocked: AAPL watch rows failed cost_2x/cost_3x stress.",
         "EMA Pullback Trend Scalping v1 remains blocked at multi-symbol level; no candidate_review rows were found.",
-        "Next recommended family: gap continuation/fade with explicit gap-size and volatility regime filters.",
-        "Alternative next family: previous-day range/liquidity sweep reversal with strict regime filters.",
+        "Gap Continuation/Fade v1 remains blocked: AAPL watch rows failed cost_2x/cost_3x stress.",
+        "Next recommended family: previous-day range/liquidity sweep reversal with strict regime filters.",
+        "Alternative next family: liquidity sweep / opening reversal around prior day high-low and premarket levels.",
     ]
 
     report = {

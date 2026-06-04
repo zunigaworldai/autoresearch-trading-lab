@@ -289,6 +289,7 @@ def main() -> None:
         ("Opening Drive Continuation", "outputs/research/opening_drive_continuation", "*_opening_drive_continuation.csv", "strategy_score", "opening_drive_continuation_v1"),
         ("EMA Pullback Trend Scalping", "outputs/research/ema_pullback_trend_scalping", "*_ema_pullback_trend_scalping.csv", "strategy_score", "ema_pullback_trend_scalping_v1"),
         ("Gap Continuation/Fade", "outputs/research/gap_continuation_fade", "*_gap_continuation_fade.csv", "strategy_score", "gap_continuation_fade_v1"),
+        ("Liquidity Sweep Reversal", "outputs/research/liquidity_sweep_reversal", "*_liquidity_sweep_reversal.csv", "strategy_score", "liquidity_sweep_reversal_v1"),
     ]
 
     blocked: set[str] = {"current_vwap_vol_keltner_family"}
@@ -315,6 +316,22 @@ def main() -> None:
     )
     block_if_cost_stress_fails(blocked, "gap_continuation_fade_v1", gap_stress)
 
+    liquidity_stress_aapl = collect_cost_stress(
+        findings,
+        "Liquidity Sweep Reversal AAPL",
+        "outputs/research/liquidity_sweep_reversal",
+        "AAPL_5m_partial_50_at_1r_be_liquidity_sweep_reversal.csv",
+    )
+    block_if_cost_stress_fails(blocked, "liquidity_sweep_reversal_v1", liquidity_stress_aapl)
+
+    liquidity_stress_nvda = collect_cost_stress(
+        findings,
+        "Liquidity Sweep Reversal NVDA",
+        "outputs/research/liquidity_sweep_reversal",
+        "NVDA_5m_partial_50_at_1r_be_liquidity_sweep_reversal.csv",
+    )
+    block_if_cost_stress_fails(blocked, "liquidity_sweep_reversal_v1", liquidity_stress_nvda)
+
     portfolios = collect_portfolios(findings)
     for row in portfolios:
         if float(row.get("pf", 0) or 0) <= 1.0 or float(row.get("expectancy", 0) or 0) <= 0:
@@ -332,6 +349,7 @@ def main() -> None:
         "Opening Drive Continuation v1 remains blocked: AAPL watch rows failed cost_2x/cost_3x stress.",
         "EMA Pullback Trend Scalping v1 remains blocked at multi-symbol level; no candidate_review rows were found.",
         "Gap Continuation/Fade v1 remains blocked: AAPL watch rows failed cost_2x/cost_3x stress.",
+        "Liquidity Sweep Reversal v1 remains blocked: AAPL/NVDA watch rows failed cost_2x/cost_3x stress.",
         "Next recommended family: previous-day range/liquidity sweep reversal with strict regime filters.",
         "Alternative next family: liquidity sweep / opening reversal around prior day high-low and premarket levels.",
     ]

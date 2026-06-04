@@ -128,7 +128,8 @@ def collect_csv_family(
             lines.append(
                 f"- {family_name} "
                 f"{row.get('symbol', 'NA')} {variant}{or_part} {window} "
-                f"exit={row.get('exit_policy', 'NA')} | "
+                f"exit={row.get('exit_policy', 'NA')} "
+                f"cost={row.get('cost_label', 'NA')} | "
                 f"trades={row.get('trades', row.get('total_trades', 'NA'))} "
                 f"TPM={fnum(row.get('trades_per_calendar_month', row.get('trades_per_month')), 2)} "
                 f"PF={fnum(row.get('pf', row.get('profit_factor')))} "
@@ -140,6 +141,52 @@ def collect_csv_family(
             )
 
     return cost1
+
+
+def collect_cost_stress(
+    lines: list[str],
+    family_name: str,
+    folder: str,
+    pattern: str,
+    setup_contains: str | None = None,
+) -> pd.DataFrame:
+    files = sorted((ROOT / folder).glob(pattern))
+    frames = [read_csv(file) for file in files]
+    frames = [frame for frame in frames if not frame.empty]
+
+    if not frames:
+        return pd.DataFrame()
+
+    df = pd.concat(frames, ignore_index=True)
+    if setup_contains and "variant" in df.columns:
+        df = df[df["variant"].astype(str).str.contains(setup_contains, na=False)].copy()
+
+    if "cost_label" not in df.columns or df.empty:
+        return df
+
+    lines.append(f"- {family_name} cost-stress rows: {len(df)}")
+    for cost_label, group in df.groupby("cost_label"):
+        if {"strategy_score", "pf", "expectancy", "trades"}.issubset(group.columns):
+            top = group.sort_values(
+                ["strategy_score", "pf", "expectancy", "trades"],
+                ascending=[False, False, False, False],
+            ).head(5)
+        else:
+            top = group.head(5)
+
+        for _, row in top.iterrows():
+            lines.append(
+                f"- {family_name} stress {cost_label} "
+                f"{row.get('symbol', 'NA')} {row.get('variant', 'NA')} {row.get('window_label', 'NA')} | "
+                f"trades={row.get('trades', 'NA')} "
+                f"PF={fnum(row.get('pf'))} "
+                f"Exp={fnum(row.get('expectancy'), 6)} "
+                f"DD={fnum(row.get('max_drawdown'))} "
+                f"YearsNeg={row.get('years_negative', 'NA')} "
+                f"Decision={row.get('decision', 'NA')}"
+            )
+
+    return df
 
 
 def collect_portfolios(lines: list[str]) -> list[dict[str, Any]]:
@@ -193,6 +240,25 @@ def block_if_no_candidate(blocked: set[str], name: str, df: pd.DataFrame) -> Non
             blocked.add(f"{name}_no_zero_negative_year_candidate")
 
 
+def block_if_cost_stress_fails(blocked: set[str], name: str, df: pd.DataFrame) -> None:
+    if df.empty or "cost_label" not in df.columns:
+        return
+
+    required = {"cost_1x", "cost_2x", "cost_3x"}
+    labels = set(df["cost_label"].dropna().astype(str).unique())
+    if not required.issubset(labels):
+        return
+
+    def any_positive(label: str) -> bool:
+        g = df[df["cost_label"] == label]
+        if {"pf", "expectancy"}.issubset(g.columns):
+            return bool(((g["pf"] > 1.0) & (g["expectancy"] > 0)).any())
+        return False
+
+    if any_positive("cost_1x") and (not any_positive("cost_2x") or not any_positive("cost_3x")):
+        blocked.add(f"{name}_failed_cost_stress")
+
+
 def main() -> None:
     findings: list[str] = []
 
@@ -220,13 +286,24 @@ def main() -> None:
         ("RSI Bollinger Mean Reversion", "outputs/research/rsi_bollinger_mean_reversion", "*_rsi_bollinger_mean_reversion.csv", "strategy_score", "rsi_bollinger_mean_reversion_v1"),
         ("Inverse Signal Audit", "outputs/research/inverse_signal_audit", "*_inverse_signal_audit.csv", "strategy_score", "inverse_signal_audit_v1"),
         ("VWAP Reclaim Continuation", "outputs/research/vwap_reclaim_continuation", "*_vwap_reclaim_continuation.csv", "strategy_score", "vwap_reclaim_continuation_v1"),
+        ("Opening Drive Continuation", "outputs/research/opening_drive_continuation", "*_opening_drive_continuation.csv", "strategy_score", "opening_drive_continuation_v1"),
     ]
 
     blocked: set[str] = {"current_vwap_vol_keltner_family"}
+    family_frames: dict[str, pd.DataFrame] = {}
 
     for family_name, folder, pattern, score_col, block_name in families:
         df = collect_csv_family(findings, family_name, folder, pattern, score_col)
+        family_frames[block_name] = df
         block_if_no_candidate(blocked, block_name, df)
+
+    opening_drive_stress = collect_cost_stress(
+        findings,
+        "Opening Drive Continuation",
+        "outputs/research/opening_drive_continuation",
+        "AAPL_5m_partial_50_at_1r_be_opening_drive_continuation.csv",
+    )
+    block_if_cost_stress_fails(blocked, "opening_drive_continuation_v1", opening_drive_stress)
 
     portfolios = collect_portfolios(findings)
     for row in portfolios:
@@ -242,8 +319,9 @@ def main() -> None:
         "RSI + Bollinger Mean Reversion v1 remains blocked; QQQ evidence has no positive expectancy.",
         "Inverse-signal audit remains blocked; inversion did not convert failed mean-reversion signals into profitable continuation.",
         "VWAP Reclaim / Continuation v1 remains blocked at multi-symbol level; no candidate_review rows were found.",
-        "Next recommended family: Opening Drive Continuation.",
-        "Alternative next family: EMA Pullback Trend Scalping.",
+        "Opening Drive Continuation v1 remains blocked: AAPL watch rows failed cost_2x/cost_3x stress.",
+        "Next recommended family: EMA Pullback Trend Scalping.",
+        "Alternative next family: gap continuation/fade with explicit gap-size and volatility regime filters.",
     ]
 
     report = {

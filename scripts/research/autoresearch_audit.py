@@ -287,6 +287,7 @@ def main() -> None:
         ("Inverse Signal Audit", "outputs/research/inverse_signal_audit", "*_inverse_signal_audit.csv", "strategy_score", "inverse_signal_audit_v1"),
         ("VWAP Reclaim Continuation", "outputs/research/vwap_reclaim_continuation", "*_vwap_reclaim_continuation.csv", "strategy_score", "vwap_reclaim_continuation_v1"),
         ("Opening Drive Continuation", "outputs/research/opening_drive_continuation", "*_opening_drive_continuation.csv", "strategy_score", "opening_drive_continuation_v1"),
+        ("EMA Pullback Trend Scalping", "outputs/research/ema_pullback_trend_scalping", "*_ema_pullback_trend_scalping.csv", "strategy_score", "ema_pullback_trend_scalping_v1"),
     ]
 
     blocked: set[str] = {"current_vwap_vol_keltner_family"}
@@ -320,8 +321,9 @@ def main() -> None:
         "Inverse-signal audit remains blocked; inversion did not convert failed mean-reversion signals into profitable continuation.",
         "VWAP Reclaim / Continuation v1 remains blocked at multi-symbol level; no candidate_review rows were found.",
         "Opening Drive Continuation v1 remains blocked: AAPL watch rows failed cost_2x/cost_3x stress.",
-        "Next recommended family: EMA Pullback Trend Scalping.",
-        "Alternative next family: gap continuation/fade with explicit gap-size and volatility regime filters.",
+        "EMA Pullback Trend Scalping v1 remains blocked at multi-symbol level; no candidate_review rows were found.",
+        "Next recommended family: gap continuation/fade with explicit gap-size and volatility regime filters.",
+        "Alternative next family: previous-day range/liquidity sweep reversal with strict regime filters.",
     ]
 
     report = {

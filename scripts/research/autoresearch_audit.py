@@ -212,55 +212,23 @@ def main() -> None:
         ROOT / "outputs/research/monthly_weekly_consistency/monthly_weekly_candidate_report.json",
     )
 
-    time_df = collect_csv_family(
-        findings,
-        "Time-window",
-        "outputs/research/time_windows_setup_combo",
-        "*_time_windows_setup_combo.csv",
-        score_col="window_score",
-    )
-    orb_df = collect_csv_family(
-        findings,
-        "Opening Range Breakout",
-        "outputs/research/opening_range_breakout",
-        "*_opening_range_breakout.csv",
-    )
-    orb_fast_df = collect_csv_family(
-        findings,
-        "Opening Range Breakout Fast",
-        "outputs/research/opening_range_breakout_fast",
-        "*_opening_range_breakout_fast.csv",
-    )
-    vwap_mr_df = collect_csv_family(
-        findings,
-        "VWAP Mean Reversion",
-        "outputs/research/vwap_mean_reversion",
-        "*_vwap_mean_reversion.csv",
-    )
-    rsi_bb_df = collect_csv_family(
-        findings,
-        "RSI Bollinger Mean Reversion",
-        "outputs/research/rsi_bollinger_mean_reversion",
-        "*_rsi_bollinger_mean_reversion.csv",
-    )
-    inverse_df = collect_csv_family(
-        findings,
-        "Inverse Signal Audit",
-        "outputs/research/inverse_signal_audit",
-        "*_inverse_signal_audit.csv",
-    )
-
-    portfolios = collect_portfolios(findings)
+    families = [
+        ("Time-window", "outputs/research/time_windows_setup_combo", "*_time_windows_setup_combo.csv", "window_score", "vwap_vol_keltner_time_window_expansion"),
+        ("Opening Range Breakout", "outputs/research/opening_range_breakout", "*_opening_range_breakout.csv", "strategy_score", "opening_range_breakout_v1"),
+        ("Opening Range Breakout Fast", "outputs/research/opening_range_breakout_fast", "*_opening_range_breakout_fast.csv", "strategy_score", "opening_range_breakout_fast_v1"),
+        ("VWAP Mean Reversion", "outputs/research/vwap_mean_reversion", "*_vwap_mean_reversion.csv", "strategy_score", "vwap_mean_reversion_v1"),
+        ("RSI Bollinger Mean Reversion", "outputs/research/rsi_bollinger_mean_reversion", "*_rsi_bollinger_mean_reversion.csv", "strategy_score", "rsi_bollinger_mean_reversion_v1"),
+        ("Inverse Signal Audit", "outputs/research/inverse_signal_audit", "*_inverse_signal_audit.csv", "strategy_score", "inverse_signal_audit_v1"),
+        ("VWAP Reclaim Continuation", "outputs/research/vwap_reclaim_continuation", "*_vwap_reclaim_continuation.csv", "strategy_score", "vwap_reclaim_continuation_v1"),
+    ]
 
     blocked: set[str] = {"current_vwap_vol_keltner_family"}
 
-    block_if_no_candidate(blocked, "vwap_vol_keltner_time_window_expansion", time_df)
-    block_if_no_candidate(blocked, "opening_range_breakout_v1", orb_df)
-    block_if_no_candidate(blocked, "opening_range_breakout_fast_v1", orb_fast_df)
-    block_if_no_candidate(blocked, "vwap_mean_reversion_v1", vwap_mr_df)
-    block_if_no_candidate(blocked, "rsi_bollinger_mean_reversion_v1", rsi_bb_df)
-    block_if_no_candidate(blocked, "inverse_signal_audit_v1", inverse_df)
+    for family_name, folder, pattern, score_col, block_name in families:
+        df = collect_csv_family(findings, family_name, folder, pattern, score_col)
+        block_if_no_candidate(blocked, block_name, df)
 
+    portfolios = collect_portfolios(findings)
     for row in portfolios:
         if float(row.get("pf", 0) or 0) <= 1.0 or float(row.get("expectancy", 0) or 0) <= 0:
             blocked.add(str(row.get("label", "portfolio_unknown")))
@@ -272,9 +240,10 @@ def main() -> None:
         "Opening Range Breakout v1/fast remains blocked unless a new regime-specific hypothesis is defined.",
         "VWAP Mean Reversion v1 remains blocked; QQQ evidence is strongly negative with both partial_50_at_1r_be and fixed exits.",
         "RSI + Bollinger Mean Reversion v1 remains blocked; QQQ evidence has no positive expectancy.",
-        "Inverse-signal audit remains blocked; inversion did not convert the failed mean-reversion signals into profitable continuation.",
-        "Next recommended family: VWAP reclaim / VWAP continuation with trend, volume, and session filters.",
-        "Alternative next family: Opening drive continuation or EMA pullback trend scalping.",
+        "Inverse-signal audit remains blocked; inversion did not convert failed mean-reversion signals into profitable continuation.",
+        "VWAP Reclaim / Continuation v1 remains blocked at multi-symbol level; no candidate_review rows were found.",
+        "Next recommended family: Opening Drive Continuation.",
+        "Alternative next family: EMA Pullback Trend Scalping.",
     ]
 
     report = {

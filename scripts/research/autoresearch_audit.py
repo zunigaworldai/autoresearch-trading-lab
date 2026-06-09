@@ -290,6 +290,7 @@ def main() -> None:
         ("EMA Pullback Trend Scalping", "outputs/research/ema_pullback_trend_scalping", "*_ema_pullback_trend_scalping.csv", "strategy_score", "ema_pullback_trend_scalping_v1"),
         ("Gap Continuation/Fade", "outputs/research/gap_continuation_fade", "*_gap_continuation_fade.csv", "strategy_score", "gap_continuation_fade_v1"),
         ("Liquidity Sweep Reversal", "outputs/research/liquidity_sweep_reversal", "*_liquidity_sweep_reversal.csv", "strategy_score", "liquidity_sweep_reversal_v1"),
+        ("Opening Failed Breakout Reversal", "outputs/research/opening_failed_breakout_reversal", "*_opening_failed_breakout_reversal.csv", "strategy_score", "opening_failed_breakout_reversal_v1"),
     ]
 
     blocked: set[str] = {"current_vwap_vol_keltner_family"}
@@ -332,6 +333,14 @@ def main() -> None:
     )
     block_if_cost_stress_fails(blocked, "liquidity_sweep_reversal_v1", liquidity_stress_nvda)
 
+
+    # Opening Failed Breakout has one cost-stress survivor, but it is not approved.
+    # It remains blocked for paper/live and marked watchlist only.
+    opening_failed_df = family_frames.get("opening_failed_breakout_reversal_v1", None)
+    if opening_failed_df is not None and not opening_failed_df.empty:
+        blocked.add("opening_failed_breakout_reversal_v1")
+        blocked.add("opening_failed_breakout_reversal_v1_watch_cost_survivor")
+
     portfolios = collect_portfolios(findings)
     for row in portfolios:
         if float(row.get("pf", 0) or 0) <= 1.0 or float(row.get("expectancy", 0) or 0) <= 0:
@@ -350,6 +359,7 @@ def main() -> None:
         "EMA Pullback Trend Scalping v1 remains blocked at multi-symbol level; no candidate_review rows were found.",
         "Gap Continuation/Fade v1 remains blocked: AAPL watch rows failed cost_2x/cost_3x stress.",
         "Liquidity Sweep Reversal v1 remains blocked: AAPL/NVDA watch rows failed cost_2x/cost_3x stress.",
+        "Opening Failed Breakout Reversal v1 remains blocked for paper/live; NVDA afternoon_1300_1500 survived cost_3x but stays watchlist due to negative years and low frequency.",
         "Next recommended family: previous-day range/liquidity sweep reversal with strict regime filters.",
         "Alternative next family: liquidity sweep / opening reversal around prior day high-low and premarket levels.",
     ]

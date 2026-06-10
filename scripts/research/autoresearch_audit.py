@@ -342,6 +342,8 @@ def main() -> None:
         blocked.add("opening_failed_breakout_reversal_v1_watch_cost_survivor")
         blocked.add("opening_failed_breakout_reversal_v2_watch_walk_forward_candidate")
         blocked.add("opening_failed_breakout_reversal_v2_not_paper_live_low_oos_density")
+        blocked.add("opening_failed_breakout_reversal_v2_pass_single_trade_dependency_low_trade_count")
+        blocked.add("opening_failed_breakout_reversal_v2_still_blocked_low_trade_count")
 
     portfolios = collect_portfolios(findings)
     for row in portfolios:
@@ -363,6 +365,7 @@ def main() -> None:
         "Liquidity Sweep Reversal v1 remains blocked: AAPL/NVDA watch rows failed cost_2x/cost_3x stress.",
         "Opening Failed Breakout Reversal v1 remains blocked for paper/live; NVDA afternoon_1300_1500 survived cost_3x but stays watchlist due to negative years and low frequency.",
         "Opening Failed Breakout Reversal v2 robust_entry_core is a watch walk-forward candidate only: cost_3x PF 2.9721, OOS 2023/2025 passed, but 2024 tiny negative sample and 2026 zero trades block paper/live.",
+        "Opening Failed Breakout Reversal v2 robust_entry_core passed single-trade dependency: leave-one-out min PF 2.4232, but remains blocked due to only 19 trades and low OOS density.",
         "Next recommended family: previous-day range/liquidity sweep reversal with strict regime filters.",
         "Alternative next family: liquidity sweep / opening reversal around prior day high-low and premarket levels.",
     ]

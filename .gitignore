@@ -7,14 +7,10 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
 worktrees/
 results/
 queue/
-
-# Agent prompt files (generated per-session by launchers)
-CLAUDE.md
-AGENTS.md
 
 # Experimental code/artifacts
 dev/
@@ -22,44 +18,43 @@ dev/
 # Results file
 results.tsv
 
+# Secrets and credentials
+.env
+.env.*
+*.pem
+*.key
+
 # Trading lab local/runtime files
-.venv/
-__pycache__/
-*.pyc
 experiments/latest_result.json
 
-# Live runtime logs
-logs/*.ndjson
-logs/*.json
-logs/PAUSED
+# Logs (blanket, preserve .gitkeep)
+logs/*
+!logs/.gitkeep
 
 # Generated strategy experiment outputs
 experiments/*.json
 experiments/trade_logs/*.csv
 
-# Webhook runtime background files
-logs/*.out
-logs/*.pid
-
 # Historical raw/processed market data
-data/raw/**/*.csv
-data/processed/**/*.csv
-
-# Historical backtest generated outputs
-outputs/backtests/**/*.csv
-outputs/backtests/**/*.json
-
-# Research generated outputs
-outputs/research/**/*.csv
-outputs/research/**/*.json
-
-# Historical market data - do not commit
 data/raw/
 data/processed/
-outputs/research/data_expansion/*.log
+data/processed_standard/
 
-# AutoResearch generated reports
-outputs/research/autoresearch/
+# Large data files (anywhere in the repo)
+*.csv
+*.parquet
+*.db
+*.sqlite
+*.sqlite3
+*.hdf5
+*.h5
+!logs/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!outputs/.gitkeep
+
+# Historical backtest generated outputs
+outputs/backtests/
 
 # Research generated outputs
 outputs/research/
